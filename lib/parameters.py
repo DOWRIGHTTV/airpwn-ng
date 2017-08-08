@@ -1,5 +1,4 @@
 from Queue import Queue, Empty
-from scapy.all import *
 import binascii
 
 class VictimParameters(object):
@@ -37,11 +36,6 @@ class VictimParameters(object):
             self.in_request_handler = keyword_parameters['in_request_handler']
         else:
             self.in_request_handler = None
-
-        if 'hijack' in keyword_parameters:
-            self.hijack = keyword_parameters['hijack']
-        else:
-            self.hijack = None
 
         if self.websites is None and self.inject_file is None and self.in_request is None:
             print "[ERROR] Please specify victim parameters"

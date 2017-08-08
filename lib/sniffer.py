@@ -1,7 +1,10 @@
-from lib.injector import Injector
 from Queue import Queue, Empty
+from pyDot11 import *
+from scapy.layers.dot11 import Dot11, Dot11WEP
+from scapy.layers.l2 import EAPOL
+from scapy.sendrecv import sniff
 from threading import Thread
-from scapy.all import *
+import sys, time
 
 class Sniffer(object):
     """This is the highest level object in the library.
@@ -10,12 +13,7 @@ class Sniffer(object):
     for packets received from scapy's sniff() function.
     """
 
-    def __init__(self, packethandler, *positional_parameters, **keyword_parameters):
-        if 'filter' in keyword_parameters:
-            self.filter = keyword_parameters['filter']
-        else:
-            self.filter = None
-
+    def __init__(self, packethandler, args, *positional_parameters, **keyword_parameters):
         if 'm' in keyword_parameters:
             self.m = keyword_parameters['m']
         else:
@@ -25,28 +23,59 @@ class Sniffer(object):
             print "[ERROR] No monitor interface selected"
             exit()
 
-        if self.filter is None:
-            if "mon" not in self.m:
-                print "[WARN] SNIFFER: Filter empty for non-monitor interface"
-
         self.packethandler = packethandler
-
-    ### This should have the option to filter regardless of which NIC we use.
-    def sniff(self, q):
-        """Target function for Queue (multithreading).
         
-        Usually we set a filter for GET requests on the dot11 tap interface.
-        It can also be an empty string.
-        """
-        if 'mon' in self.m:
-            sniff(iface = self.m, prn = lambda x: q.put(x), store = 0)
-        else:
-            sniff(iface = self.m, filter = self.filter, prn = lambda x: q.put(x), store = 0)
+        if args.wpa:
+            self.shake = Handshake(args.wpa, args.essid, args.pcap)
+            self.packethandler.injector.shake = self.shake
+
+    def sniff(self, q):
+        """Target function for Queue (multithreading)"""
+        sniff(iface = self.m, prn = lambda x: q.put(x), store = 0)
 
 
     def handler(self, q, m, pkt, args):
         """This function exists solely to reduce lines of code"""
-        self.packethandler.process(m, pkt, args)
+        
+        ### This will need a different structure for self.shake bridge
+        ### Multiple vics might collide...
+        ## WPA
+        if args.wpa:
+            
+            ### dict tk and use tgtMAC as key, tk as value
+            #tk = self.shake.tgtInfo.get(self.tgtMAC)
+            
+            ## eType tagalong via packerhandler.eType when rdy for tkip
+            eType = self.shake.encDict.get(self.tgtMAC)
+            
+            ### tkip vs ccmp decision pt for now
+            if eType == 'ccmp':
+                encKey = self.shake.tgtInfo.get(self.tgtMAC)[1]
+            else:
+                encKey = self.shake.tgtInfo.get(self.tgtMAC)[0]
+
+            ## Decrypt
+            self.packethandler.injector.shake.origPkt, decodedPkt, self.packethandler.injector.shake.PN = wpaDecrypt(encKey, pkt, eType, False)
+            
+            #print decodedPkt.summary()
+            
+            ## Process
+            self.packethandler.process(m, decodedPkt, args)
+
+        ## WEP
+        elif args.wep:
+            
+            ## Decrypt
+            pkt, iVal = wepDecrypt(pkt, args.wep, False)
+
+            ## Process
+            self.packethandler.process(m, pkt, args)
+
+        ## Open
+        else:
+            
+            ## Process
+            self.packethandler.process(m, pkt, args)
         q.task_done()
 
 
@@ -59,60 +88,175 @@ class Sniffer(object):
         If args.b is thrown, a two-way sniff is implemented
         Otherwise airpwn-ng will only look at packets headed outbound
         While airpwn-ng only hijacks inbound frames to begin with,
-        -b is useful for grabbing any cookies inbound from a server
+        -b is useful for grabbing data inbound from a server
         
         Useful reminder:        
             to-DS is:    1L (open) / 65L (crypted)
             from-DS is:  2L (open) /66L (crypted)
         """
-        ### Play with this later, switch to scapy 2.3.3 required this...
-        #q = Queue()
-        q = Queue.Queue()
+        q = Queue()
         sniffer = Thread(target = self.sniff, args = (q,))
         sniffer.daemon = True
         sniffer.start()
 
-        ## Deal with only BSSID filtering
-        if args.bssid and not args.b:
-            while True:
-                try:
-                    pkt = q.get(timeout = 1)
-                    if pkt[Dot11].addr3 == args.bssid:
-                        self.handler(q, self.m, pkt, args)
-                    else:
+        ## Sniffing in Monitor Mode for Open wifi
+        if args.mon == 'mon' and not args.wep and not args.wpa:
+            ## BSSID filtering and Speedpatch
+            if args.bssid and not args.b:
+                #print 'BSSID filtering and Speedpatch\n'
+                while True:
+                    try:
+                        pkt = q.get(timeout = 1)
+                        if pkt[Dot11].addr1 == args.bssid and pkt[Dot11].FCfield == 1L and len(pkt) >= args.s:
+                            self.handler(q, self.m, pkt, args)
+                        else:
+                            pass
+                    except Empty:
+                        #q.task_done()
                         pass
-                except Empty:
-                    #q.task_done()
-                    pass
 
-        ## Deal with only no speedpatch
-        elif args.b and not args.bssid:
-            while True:
-                try:
-                    pkt = q.get(timeout = 1)
-                    if pkt[Dot11].FCfield == 1L:
-                        self.handler(q, self.m, pkt, args)
-                    else:
+            ## NO Speedpatch and NO BSSID filtering
+            elif args.b and not args.bssid:
+                #print 'NO Speedpatch and NO BSSID filtering\n'
+                while True:
+                    try:
+                        pkt = q.get(timeout = 1)
+                        if (pkt[Dot11].FCfield == 1L or pkt[Dot11].FCfield == 2L) and len(pkt) >= args.s:
+                            self.handler(q, self.m, pkt, args)
+                        else:
+                            pass
+                    except Empty:
+                        #q.task_done()
                         pass
-                except Empty:
-                    #q.task_done()
-                    pass
 
-        ## Deal with BSSID filtering and no speedpatch
-        elif args.bssid and args.b:
-            while True:
-                try:
-                    pkt = q.get(timeout = 1)
-                    if pkt[Dot11].addr3 == args.bssid and pkt[Dot11].FCfield == 1L:
-                        self.handler(q, self.m, pkt, args)
-                    else:
+            ## BSSID filtering and NO Speedpatch
+            elif args.bssid and args.b:
+                #print 'BSSID filtering and NO Speedpatch\n'
+                while True:
+                    try:
+                        pkt = q.get(timeout = 1)
+                        if (pkt[Dot11].addr1 == args.bssid and pkt[Dot11].FCfield == 1L and len(pkt) >= args.s) or (pkt[Dot11].addr2 == args.bssid and pkt[Dot11].FCfield == 2L and len(pkt) >= args.s):                                                       
+                            self.handler(q, self.m, pkt, args)
+                        else:
+                            pass
+                    except Empty:
+                        #q.task_done()
                         pass
-                except Empty:
-                    #q.task_done()
-                    pass
 
-        ## Deal with anything else
+            ## Speedpatch and NO BSSID filtering
+            else:
+                #print 'Speedpatch and NO BSSID filtering\n'
+                while True:
+                    try:
+                        pkt = q.get(timeout = 1)
+                        if pkt[Dot11].FCfield == 1L and len(pkt) >= args.s:
+                            self.handler(q, self.m, pkt, args)
+                    except Empty:
+                        #q.task_done()
+                        pass
+
+        ## Sniffing in Monitor Mode for WEP
+        elif args.mon == 'mon' and args.wep:
+            ## BSSID filtering and Speedpatch
+            if args.bssid and not args.b:
+                #print 'BSSID filtering and Speedpatch\n'
+                while True:
+                    try:
+                        pkt = q.get(timeout = 1)
+                        if pkt[Dot11].addr1 == args.bssid and pkt[Dot11].FCfield == 65L and len(pkt) >= args.s:
+                            self.handler(q, self.m, pkt, args)
+                        else:
+                            pass
+                    except Empty:
+                        #q.task_done()
+                        pass
+
+            ## BSSID filtering and NO Speedpatch
+            elif args.bssid and args.b:
+                #print 'BSSID filtering and NO Speedpatch\n'
+                while True:
+                    try:
+                        pkt = q.get(timeout = 1)
+                        if (pkt[Dot11].addr1 == args.bssid and pkt[Dot11].FCfield == 65L and len(pkt) >= args.s) or (pkt[Dot11].addr2 == args.bssid and pkt[Dot11].FCfield == 66L and len(pkt) >= args.s):                                                       
+                            self.handler(q, self.m, pkt, args)
+                        else:
+                            pass
+                    except Empty:
+                        #q.task_done()
+                        pass
+
+        ## Sniffing in Monitor Mode for WPA
+        elif args.mon == 'mon' and args.wpa:
+            ### Moved to __init__ for now
+            #self.shake = Handshake(args.wpa, args.essid)
+            
+             ## BSSID filtering and Speedpatch
+            if args.bssid and not args.b:
+                #print 'BSSID filtering and Speedpatch\n'
+                while True:
+                    try:
+                        pkt = q.get(timeout = 1)
+                        
+                        if pkt.haslayer(EAPOL):
+                            self.shake.eapolGrab(pkt)
+                        
+                        elif pkt[Dot11].addr1 == args.bssid and pkt[Dot11].FCfield == 65L and len(pkt) >= args.s:
+                            self.tgtMAC = False
+                            
+                            ## MAC verification
+                            if pkt.addr1 in self.shake.availTgts:
+                                self.tgtMAC = pkt.addr1
+                            elif pkt.addr2 in self.shake.availTgts:
+                                self.tgtMAC = pkt.addr2
+                        
+                            ## Pass the packet
+                            if self.tgtMAC:
+                                self.handler(q, self.m, pkt, args)
+                            else:
+                                pass
+                        else:
+                            pass
+                    except Empty:
+                        #q.task_done()
+                        pass
+
+            ## BSSID filtering and NO Speedpatch
+            elif args.bssid and args.b:
+                #print 'BSSID filtering and NO Speedpatch\n'
+                while True:
+                    try:
+                        pkt = q.get(timeout = 1)
+                        
+                        if packet.haslayer(EAPOL):
+                            self.shake.eapolGrab(packet)
+                        
+                        
+                        elif (pkt[Dot11].addr1 == args.bssid and pkt[Dot11].FCfield == 65L and len(pkt) >= args.s) or (pkt[Dot11].addr2 == args.bssid and pkt[Dot11].FCfield == 66L and len(pkt) >= args.s):
+                            self.tgtMAC = False
+                            
+                            ## MAC verification
+                            if packet.addr1 in self.shake.availTgts:
+                                self.tgtMAC = packet.addr1
+                            elif packet.addr2 in self.shake.availTgts:
+                                self.tgtMAC = packet.addr2
+                            
+                            ## Pass the packet
+                            if self.tgtMAC:
+                                self.handler(q, self.m, pkt, args)
+                            else:
+                                pass
+                        else:
+                            pass
+                    except Empty:
+                        #q.task_done()
+                        pass
+
+        ## Sniffing in Tap Mode -- aka Encrypted WiFi
+        ## No longer needed!
+        ## Left for historical purposes
         else:
+            ## Tap mode
+            print 'Tap mode\n'
             while True:
                 try:
                     pkt = q.get(timeout = 1)

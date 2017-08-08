@@ -1,10 +1,6 @@
-from lib.parameters import VictimParameters
 from lib.packet_handler import PacketHandler
+from lib.parameters import VictimParameters
 from lib.sniffer import Sniffer
-
-### Debug why this PacketHandler doesn't take care of this
-### Refer by commenting out and then looking at
-### v1 = Victim(mac = victim, victim_parameters = vp)
 from lib.victim import Victim
 
 class File(object):
@@ -15,16 +11,7 @@ class File(object):
 
         ## Victim parameters
         if args.covert:
-            
-            ## Broadcast mode
-            if not args.t:
-                
-                ### Trace hijacker
-                vp = VictimParameters(inject_file = args.injection, covert = args.covert, hijack = 'hijacker')
-
-            ## Targeted mode
-            else:
-                vp = VictimParameters(inject_file = args.injection, covert = args.covert)
+            vp = VictimParameters(inject_file = args.injection, covert = args.covert)
         else:
             vp = VictimParameters(inject_file = args.injection)
 
@@ -47,21 +34,10 @@ class File(object):
             else:
                 ph = PacketHandler(Args = args, i = args.i, victims = victims, excluded = args.exclude_hosts)
 
-        ### Need a better way to define monitor mode NIC
         ## Begin sniffing
-        if 'mon' in args.m:
-            snif = Sniffer(ph, m = args.m)
-            snif.threaded_sniff(args)
-        else:
-            ## Broadcast mode
-            if not args.t:
-                snif = Sniffer(ph, m = args.m, filter = '')
-
-            ## Targeted mode
-            else:
-                snif = Sniffer(ph, m = args.m)
-
-            snif.threaded_sniff(args)
+        #snif = Sniffer(ph, m = args.m)
+        snif = Sniffer(ph, args, m = args.m)
+        snif.threaded_sniff(args)
 
 
 
@@ -96,9 +72,5 @@ class List(object):
                 ph = PacketHandler(Args = args, i = args.i, victims = victims, excluded = args.exclude_hosts)
 
         ## Begin sniffing
-        if 'mon' in args.m:
-            snif = Sniffer(ph, m = args.m)
-            snif.threaded_sniff(args)
-        else:
-            snif = Sniffer(ph, m = args.m, filter = '')
-            snif.threaded_sniff(args)
+        snif = Sniffer(ph, args, m = args.m)
+        snif.threaded_sniff(args)
