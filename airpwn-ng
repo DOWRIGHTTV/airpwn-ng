@@ -2,6 +2,7 @@
 
 import logging, subprocess, os, sys, argparse, signal
 from lib.logger import Database, Tee as tee
+from lib.styles import File, List
 from lib.visuals import Bcolors
 from lib.victim import Victim
 
@@ -96,11 +97,6 @@ def main(args):
         print '--wpa requires --bssid and --essid\n'
         sys.exit(1)
 
-    ## Enforce managed mode for injection for WPA for the time being
-    #if args.wpa is not None and (args.inj is None or args.inj == 'mon'):
-        #print "--wpa requires --inj 'man' for now\n'"
-        #sys.exit(1)
-
     ## Lowercase BSSID
     if args.bssid is not None:
         args.bssid = args.bssid.lower()
@@ -160,21 +156,6 @@ def main(args):
         if args.inj == 'mon':
             channelSet(args.i, args.channel)
     
-    ## Printouts
-    ### Thinking about it, in the scenario they would print...
-    ### -i wlan0mon and -m wlan0mon, open wifi, etc..
-    ### We're probably getting better performance anyways,
-    ### nic 1 inbound, nic 2 outbound, less processing spent full-dupliex, etc..
-    ### This printout is silly.
-    ### Coverage in the new tutorial should be sufficient
-    #if (args.mon == 'mon' and args.inj == 'mon') and (args.wpa is None or args.wep is None) and (args.i != args.m):
-        #print Bcolors.WARNING + '[!] It appears you are using a monitor mode interface as your monitoring input.'
-        #print '[!] If you are attacking open wireless networks, please use the same monitoring interface with -i for better performance.' + Bcolors.ENDC
-        
-    ### no more tap needed....
-    #if 'mon' not in args.m:
-        #print Bcolors.WARNING + '[!] It appears your are trying to attack a WEP/WPA protected network. Please ensure -m is your dot11 tap interface and that -i is connected to the target AP.' + Bcolors.ENDC
-
     ### NOT IMPLEMENTED YET
     ## Whitelist checks
     #if args.exclude_hosts is not None:
@@ -295,13 +276,6 @@ if __name__ == '__main__':
     ## ADD GLOBAL SIGNAL HANDLER
     signal_handler = crtlC(args)
     signal.signal(signal.SIGINT, signal_handler)
-    
-    ## Paths and imports
-    if args.o == 'pypy':
-        pwd = os.getcwd()
-        sys.path.append(pwd + '/_PYPY')
-        sys.path.append(pwd + '/_PYPY/pyDot11')
-    from lib.styles import File, List
-    
+
     ## Launch
     main(args)
