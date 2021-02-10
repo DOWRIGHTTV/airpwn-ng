@@ -1,5 +1,6 @@
 import time
 
+
 class Headers(object):
     """ Headers class
 
@@ -20,13 +21,20 @@ class Headers(object):
         headers += "\r\n"
     """
     
-    def default(self, injection):
-        """ Create the HTML headers """
-        headers = 'HTTP/1.1 200 OK\r\n'
-        headers += 'Date: ' + time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime()) + '\r\n'
-        headers += 'Server: Apache\r\n'
-        headers += 'Content-Length: ' + str(len(injection)) + '\r\n'
-        headers += 'Connection: close\r\n'
-        headers += 'Content-Type: text/html\r\n'
-        headers += '\r\n'
-        return headers
+   @static_method
+    def default(injection):
+        """ Create the default HTML headers """
+
+        gm_time = time.strftime('%a, %d %b %Y %H:%M:%S GMT', time.gmtime())
+
+        # using .format for compatibility instead of f string
+        # '' after content type to ensure join adds the final return/line break 
+        return '\r\n'.join([
+            'HTTP/1.1 200 OK\r\n',
+            'Date: {}'.format(gm_time),
+            'Server: Apache',
+            'Content-Length: {}'.format(len(injection),
+            'Connection: close',
+            'Content-Type: text/html',
+            ''
+        ])
