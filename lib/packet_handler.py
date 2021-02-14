@@ -5,10 +5,16 @@ from scapy.layers.l2 import Ether, LLC, SNAP
 from scapy.layers.inet import IP, TCP
 from scapy.packet import Raw
 from scapy.utils import wrpcap
+from ipaddress import IPv4Address
 import socket
+
 
 global BLOCK_HOSTS
 BLOCK_HOSTS = set()
+
+# direct assignment for performance
+resolve_hostname = socket.gethostbyname
+
 
 class PacketHandler(object):
     """This class does all the heavy-lifting.
@@ -360,37 +366,17 @@ class PacketHandler(object):
         If it's not, dns resolve it and add those IPs to the exclude list.
         """
         processed = set()
+        processed_add = processed.add # direct assignment to add method to speed up insertion times.
         for item in excluded:
             try:
-                test = item.split('.')
-                if len(test) != 4:
-                    try:
-                        processed.add(socket.gethostbyname(item))
-                    except:
-                        pass
-
-                ### This logic can be cleaner/faster
-                ### regex -or- (mac check, then assume if try fails, it must be ip)
-                else:
-                    #print test
-                    try:
-                        if int(test[0])>0 and int(test[0]) < 256:
-                            if int(test[1])>0 and int(test[1]) < 256:
-                                if int(test[2])>0 and int(test[2]) < 256:
-                                    if int(test[3])>0 and int(test[3]) < 256:
-                                        processed.add(item)
-
-                    except:
-                        processed.add(socket.gethostbyname(item))
-
+                IPv4Address(item)
             except:
-                try:
-                    processed.add(socket.gethostbyname(item))
-                except:
-                    pass
+                processed_add(resolve_hostname(item))
+
+            else:
+                processed_add(item)
 
         return processed
-
 
     def proc_handler(self, packet, args):
         """Process handler responsible for the last mile of packet filtering
